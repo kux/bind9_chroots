@@ -68,6 +68,7 @@ def build_chroot(env, args, chroot_dir, ns_ip, master_ips=None):
                     xfr_ips=ns_ips(args.xfr_ip_prefix, args.xfr_count),
                     resolver_ips=ns_ips(args.resolver_ip_prefix,
                                         args.resolver_count),
+                    test_records=xrange(args.records_count)
                 ))
 
 
@@ -138,14 +139,14 @@ def main():
     parser.add_argument('--retry', type=int, default=30)
     parser.add_argument('--expire', type=int, default=300)
     parser.add_argument('--negative_ttl', type=int, default=5)
+    parser.add_argument('--records-count', type=int, default=100)
 
     parser.add_argument('--ns-path')
 
     parser.add_argument('--nsupdate-path')
     parser.add_argument('--nsupdate-interval', type=int, default=1)
 
-    parser.add_argument('--debug',
-                        action='store_true', default=False)
+    parser.add_argument('--debug', action='store_true', default=False)
 
     args = parser.parse_args()
 
@@ -156,6 +157,8 @@ def main():
 
     if args.zones < 1:
         raise ValueError('At least one zone needs to be configured')
+    if args.records_count < 1:
+        raise ValueError('At least one test record needs to be configured')
 
     loader = jinja2.FileSystemLoader('templates')
     env = jinja2.Environment(loader=loader)
