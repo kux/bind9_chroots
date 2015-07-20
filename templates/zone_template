@@ -4,11 +4,11 @@ zone{{ zone_no }}.com. IN SOA master.zone{{ zone_no }}.com. admin.zone{{ zone_no
 zone{{ zone_no }}.com. IN NS master.zone{{ zone_no }}.com.
 master.zone{{ zone_no }}.com. IN A {{ master_ip }}
 
-{% for xfr in xfrs %}
+{% for xfr_ip in xfr_ips %}
 zone{{ zone_no }}.com. IN NS xfr{{ loop.index }}.zone{{ zone_no }}.com.
-xfr{{ loop.index }}.zone{{ zone_no }}.com. IN A {{ xfr_ip_prefix }}.{{ loop.index }}
+xfr{{ loop.index }}.zone{{ zone_no }}.com. IN A {{ xfr_ip }}
 {% endfor %}
-{% for resolver in resolvers %}
+{% for resolver_ip in resolver_ips %}
 zone{{ zone_no }}.com. IN NS resolver{{ loop.index }}.zone{{ zone_no }}.com.
-resolver{{ loop.index }}.zone{{ zone_no }}.com. IN A {{ resolver_ip_prefix }}.{{ loop.index }}
+resolver{{ loop.index }}.zone{{ zone_no }}.com. IN A {{ resolver_ip }}
 {% endfor %}
