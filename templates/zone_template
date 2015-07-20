@@ -12,3 +12,5 @@ xfr{{ loop.index }}.zone{{ zone_no }}.com. IN A {{ xfr_ip }}
 zone{{ zone_no }}.com. IN NS resolver{{ loop.index }}.zone{{ zone_no }}.com.
 resolver{{ loop.index }}.zone{{ zone_no }}.com. IN A {{ resolver_ip }}
 {% endfor %}
+
+test.zone{{ zone_no }}.com. IN TXT 1

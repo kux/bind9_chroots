@@ -1,4 +1,5 @@
 import argparse
+import logging
 import os
 import subprocess
 import shutil
@@ -7,19 +8,21 @@ import time
 import jinja2
 
 
-def run_command(command):
-    print command
+def run_command(command, stop_on_failure=True):
+    logging.debug('Running command: %s', command)
     command = command.split()
-    subp = subprocess.Popen(
-        command,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-    )
-    out, err = subp.communicate()
-    if out:
-        print out
-    if err:
-        print err
+    try:
+        output = subprocess.check_output(
+            command,
+            stderr=subprocess.STDOUT
+        )
+    except subprocess.CalledProcessError as e:
+        logging.error(e.output)
+        if stop_on_failure:
+            raise
+    else:
+        if output:
+            logging.debug('Command output: %s', output)
 
 
 def ns_ips(ns_ip_prefix, ns_count):
@@ -27,6 +30,7 @@ def ns_ips(ns_ip_prefix, ns_count):
 
 
 def clean_existing_directories():
+    logging.info('Removing existing chroots')
     if os.path.exists('chroots'):
         shutil.rmtree('chroots')
 
@@ -38,6 +42,7 @@ def build_dirs(chroot_name):
 
 
 def build_chroot(env, args, chroot_dir, ns_ip, master_ips=None):
+    logging.info('Building %s', chroot_dir)
     build_dirs(chroot_dir)
     ns_type = 'master' if master_ips is None else 'slave'
     named9_conf_template = env.get_template('named9.conf')
@@ -81,10 +86,11 @@ def build_all_chroots(env, args):
 
 
 def kill_running_nameservers():
-    run_command('killall named')
+    run_command('killall named', stop_on_failure=False)
 
 
 def configure_ips(args):
+    logging.info('Configuring ips')
     master_ip = args.master_ip
     xfr_ips = ns_ips(args.xfr_ip_prefix, args.xfr_count)
     resolver_ips = ns_ips(args.resolver_ip_prefix, args.resolver_count)
@@ -93,10 +99,30 @@ def configure_ips(args):
 
 
 def start_nameservers(ns_path):
+    logging.info('Starting nameservers')
     for chroot in os.listdir('chroots'):
         run_command(
             '%s -t chroots/%s -c /var/named/named9.conf' % (ns_path, chroot)
         )
+
+
+def nsupdate_loop(env, args):
+    current_value = 1
+    while True:
+        nsupdate_template = env.get_template('nsupdate')
+        nsupdate_statements = nsupdate_template.render(
+            master_ip=args.master_ip,
+            old_value=current_value,
+            new_value=current_value + 1
+        )
+        with open('/tmp/nsupdate_statements', 'w') as fh:
+            fh.write(nsupdate_statements)
+        logging.info('Updating test TXT record from %d to %d',
+                     current_value, current_value + 1)
+        run_command('%s /tmp/nsupdate_statements' % args.nsupdate_path)
+        current_value += 1
+        time.sleep(args.nsupdate_interval)
+
 
 def main():
     parser = argparse.ArgumentParser(description='Generate bind9 chroots')
@@ -115,11 +141,24 @@ def main():
 
     parser.add_argument('--ns-path')
 
+    parser.add_argument('--nsupdate-path')
+    parser.add_argument('--nsupdate-interval', type=int, default=1)
+
+    parser.add_argument('--debug',
+                        action='store_true', default=False)
+
     args = parser.parse_args()
+
+    logging.basicConfig(
+        format='%(asctime)s %(levelname)s: %(message)s',
+        level=logging.DEBUG if args.debug else logging.INFO
+    )
+
+    if args.zones < 1:
+        raise ValueError('At least one zone needs to be configured')
 
     loader = jinja2.FileSystemLoader('templates')
     env = jinja2.Environment(loader=loader)
-
     clean_existing_directories()
     build_all_chroots(env, args)
     if args.ns_path is not None:
@@ -127,6 +166,9 @@ def main():
         time.sleep(5)  # TODO: check that they actually stopped
         configure_ips(args)
         start_nameservers(args.ns_path)
+
+    if args.nsupdate_path is not None:
+        nsupdate_loop(env, args)
 
 
 if __name__ == '__main__':
