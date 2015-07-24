@@ -45,13 +45,18 @@ def build_chroot(env, args, chroot_dir, ns_ip, master_ips=None):
     logging.info('Building %s', chroot_dir)
     build_dirs(chroot_dir)
     ns_type = 'master' if master_ips is None else 'slave'
+    if args.no_chroots:
+        base_dir = os.path.join(os.getcwd(), 'chroots', chroot_dir)
+    else:
+        base_dir = ''
     named9_conf_template = env.get_template('named9.conf')
     with open('chroots/%s/var/named/named9.conf' % chroot_dir, 'w') as fh:
         fh.write(named9_conf_template.render(
             ns_type=ns_type,
             zones=xrange(args.zones),
             ns_ip=ns_ip,
-            master_ips=master_ips
+            master_ips=master_ips,
+            base_dir=base_dir
         ))
     if ns_type == 'master':
         zone_template = env.get_template('zone_template')
@@ -99,35 +104,47 @@ def configure_ips(args):
         run_command('ifconfig lo:%d %s' % (index, ip))
 
 
-def start_nameservers(ns_path):
+def start_nameservers(ns_path, use_chroots):
     logging.info('Starting nameservers')
     for chroot in os.listdir('chroots'):
-        run_command(
-            '%s -t chroots/%s -c /var/named/named9.conf' % (ns_path, chroot)
-        )
+        if use_chroots:
+            run_command(
+                '%s -t chroots/%s -c /var/named/named9.conf' % (
+                    ns_path, chroot))
+        else:
+            conf_path = os.path.join(os.getcwd(), 'chroots', chroot,
+                                     'var/named/named9.conf')
+            run_command('%s -c %s' % (ns_path, conf_path))
 
 
 def nsupdate_loop(env, args):
     current_value = 1
+    if args.updated_zones == 'all':
+        zones = xrange(args.zones)
+    else:
+        zones = [int(zone) for zone in args.updated_zones.split(',')]
+
     while True:
         nsupdate_template = env.get_template('nsupdate')
-        nsupdate_statements = nsupdate_template.render(
-            master_ip=args.master_ip,
-            old_value=current_value,
-            new_value=current_value + 1
-        )
-        with open('/tmp/nsupdate_statements', 'w') as fh:
-            fh.write(nsupdate_statements)
         logging.info('Updating test TXT record from %d to %d',
                      current_value, current_value + 1)
-        run_command('%s /tmp/nsupdate_statements' % args.nsupdate_path)
+        for zone_no in zones:
+            nsupdate_statements = nsupdate_template.render(
+                master_ip=args.master_ip,
+                old_value=current_value,
+                new_value=current_value + 1,
+                zone_no=zone_no
+            ).replace('\n\n', '\n')
+            with open('/tmp/nsupdate_statements', 'w') as fh:
+                fh.write(nsupdate_statements)
+            run_command('%s /tmp/nsupdate_statements' % args.nsupdate_path)
         current_value += 1
         time.sleep(args.nsupdate_interval)
 
 
 def main():
     parser = argparse.ArgumentParser(description='Generate bind9 chroots')
-    parser.add_argument('--zones', type=int, default=1)
+    parser.add_argument('--zones', type=int, default=2)
     parser.add_argument('--master-ip', default='127.1.1.1')
     parser.add_argument('--xfr-ip-prefix', default='127.2.2')
     parser.add_argument('--resolver-ip-prefix', default='127.3.3')
@@ -139,13 +156,15 @@ def main():
     parser.add_argument('--retry', type=int, default=30)
     parser.add_argument('--expire', type=int, default=300)
     parser.add_argument('--negative_ttl', type=int, default=5)
-    parser.add_argument('--records-count', type=int, default=100)
+    parser.add_argument('--records-count', type=int, default=1000)
 
     parser.add_argument('--ns-path')
 
     parser.add_argument('--nsupdate-path')
+    parser.add_argument('--updated-zones', default='all')
     parser.add_argument('--nsupdate-interval', type=int, default=1)
 
+    parser.add_argument('--no-chroots', action='store_true', default=False)
     parser.add_argument('--debug', action='store_true', default=False)
 
     args = parser.parse_args()
@@ -168,7 +187,7 @@ def main():
         kill_running_nameservers()
         time.sleep(5)  # TODO: check that they actually stopped
         configure_ips(args)
-        start_nameservers(args.ns_path)
+        start_nameservers(args.ns_path, not args.no_chroots)
 
     if args.nsupdate_path is not None:
         nsupdate_loop(env, args)

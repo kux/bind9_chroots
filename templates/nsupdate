@@ -1,4 +1,4 @@
 server {{ master_ip }}
-update delete test0.zone0.com. 10 TXT {{ old_value }}
-update add test0.zone0.com. 10 TXT {{ new_value }}
+update delete test0.zone{{ zone_no }}.com. 30 TXT {{ old_value }}
+update add test0.zone{{ zone_no }}.com. 30 TXT {{ new_value }}
 send

@@ -30,6 +30,6 @@ resolver{{ loop.index }} A {{ resolver_ip }}
 {% endfor %}
 
 {% for test_rec_no in test_records %}
-test{{ test_rec_no }}.zone{{ zone_no }}.com. TXT 1
+test{{ test_rec_no }} TXT 1
 {% endfor %}
 
