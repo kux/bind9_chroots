@@ -1,6 +1,6 @@
 $ORIGIN .
 $TTL 30
-zone{{ zone_no }}.com. IN SOA master.zone{{ zone_no }}.com. admin.zone{{ zone_no }}.com. (
+{{ zone_name }}. IN SOA master.{{ zone_name }}. admin.{{ zone_name }}. (
        1
        {{ refresh }}
        {{ retry }}
@@ -8,17 +8,17 @@ zone{{ zone_no }}.com. IN SOA master.zone{{ zone_no }}.com. admin.zone{{ zone_no
        {{ negative_ttl}}
        )
 
-    NS master.zone{{ zone_no }}.com.
+    NS master.{{ zone_name }}.
 
 {% for xfr_ip in xfr_ips %}
-    NS xfr{{ loop.index }}.zone{{ zone_no }}.com.
+    NS xfr{{ loop.index }}.{{ zone_name }}.
 {% endfor %}
 
 {% for resolver_ip in resolver_ips %}
-    NS resolver{{ loop.index }}.zone{{ zone_no }}.com.
+    NS resolver{{ loop.index }}.{{ zone_name }}.
 {% endfor %}
 
-$ORIGIN zone{{ zone_no }}.com.
+$ORIGIN  {{ zone_name }}.
 master A {{ master_ip }}
 
 {% for xfr_ip in xfr_ips %}

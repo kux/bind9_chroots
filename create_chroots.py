@@ -50,21 +50,22 @@ def build_chroot(env, args, chroot_dir, ns_ip, master_ips=None):
     else:
         base_dir = ''
     named9_conf_template = env.get_template('named9.conf')
+    zones = ['zone%d.com' % i for i in xrange(args.zones)]
     with open('chroots/%s/var/named/named9.conf' % chroot_dir, 'w') as fh:
         fh.write(named9_conf_template.render(
             ns_type=ns_type,
-            zones=xrange(args.zones),
+            zones=zones,
             ns_ip=ns_ip,
             master_ips=master_ips,
             base_dir=base_dir
         ))
     if ns_type == 'master':
         zone_template = env.get_template('zone_template')
-        for zone_no in xrange(args.zones):
-            path = 'chroots/master/var/named/zones/zone%d.com.zone'
-            with open(path % zone_no, 'w') as fh:
+        for zone_name in zones:
+            path = 'chroots/master/var/named/zones/%s.zone'
+            with open(path % zone_name, 'w') as fh:
                 fh.write(zone_template.render(
-                    zone_no=zone_no,
+                    zone_name=zone_name,
                     refresh=args.refresh,
                     retry=args.retry,
                     expire=args.expire,
