@@ -1,35 +1,26 @@
 $ORIGIN .
 $TTL 30
-{{ zone_name }}. IN SOA master.{{ zone_name }}. admin.{{ zone_name }}. (
+{{ zone.name }}. IN SOA master.{{ zone.name }}. admin.{{ zone.name }}. (
        1
-       {{ refresh }}
-       {{ retry }}
-       {{ expire }}
-       {{ negative_ttl}}
+       {{ zone.refresh }}
+       {{ zone.retry }}
+       {{ zone.expire }}
+       {{ zone.negative_ttl}}
        )
 
-    NS master.{{ zone_name }}.
-
-{% for xfr_ip in xfr_ips %}
-    NS xfr{{ loop.index }}.{{ zone_name }}.
+{% for ns in zone.auth_nameservers %}
+    NS {{ ns.name}}.{{ zone.name }}.
 {% endfor %}
 
-{% for resolver_ip in resolver_ips %}
-    NS resolver{{ loop.index }}.{{ zone_name }}.
+{% for ns in zone.auth_nameservers %}
+{{ ns.name }}.{{ zone.name }}. A {{ ns.ip }}
 {% endfor %}
 
-$ORIGIN  {{ zone_name }}.
-master A {{ master_ip }}
 
-{% for xfr_ip in xfr_ips %}
-xfr{{ loop.index }} A {{ xfr_ip }}
-{% endfor %}
 
-{% for resolver_ip in resolver_ips %}
-resolver{{ loop.index }} A {{ resolver_ip }}
-{% endfor %}
+$ORIGIN  {{ zone.name }}.
 
-{% for test_rec_no in test_records %}
-test{{ test_rec_no }} TXT 1
+{% for test_rec in zone.test_records %}
+{{ test_rec }} TXT 1
 {% endfor %}
 
