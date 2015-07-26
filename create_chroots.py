@@ -163,7 +163,7 @@ def nsupdate_loop(nsupdate_path, update_interval,
 
 def main():
     parser = argparse.ArgumentParser(description='Generate bind9 chroots')
-    parser.add_argument('--zones-count', type=int, default=2)
+    parser.add_argument('--zone-count', type=int, default=2)
     parser.add_argument('--master-ip', default='127.1.1.1')
     parser.add_argument('--xfr-ip-prefix', default='127.2.2')
     parser.add_argument('--resolver-ip-prefix', default='127.3.3')
@@ -221,22 +221,22 @@ def main():
                    expire=args.expire,
                    negative_ttl=args.negative_ttl,
                    record_count=args.record_count)
-        for i in xrange(args.zones_count)]
+        for i in xrange(args.zone_count)]
     master_ns.zones = master_zones
 
     xfr_zones = [
         SlaveZone('zone%d.com' % i, master_ips=[master_ns.ip])
-        for i in xrange(args.zones_count)]
+        for i in xrange(args.zone_count)]
     for xfr in xfrs:
         xfr.zones = xfr_zones
 
     resolver_zones = [
         SlaveZone('zone%d.com' % i, master_ips=[xfr.ip for xfr in xfrs])
-        for i in xrange(args.zones_count)]
+        for i in xrange(args.zone_count)]
     for resolver in resolvers:
         resolver.zones = resolver_zones
 
-    if args.zones_count < 1:
+    if args.zone_count < 1:
         raise ValueError('At least one zone needs to be configured')
     if args.record_count < 1:
         raise ValueError('At least one test record needs to be configured')
