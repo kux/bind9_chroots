@@ -1,4 +1,5 @@
 import argparse
+import copy
 import logging
 import os
 import subprocess
@@ -7,17 +8,23 @@ import time
 
 import jinja2
 
-
 ENV = jinja2.Environment(loader=jinja2.FileSystemLoader('templates'))
 
 
 class Nameserver(object):
-    def __init__(self, name, ip, is_recursive, use_chroot):
+    def __init__(self, name, ip, use_chroot):
         self.name = name
         self.ip = ip
-        self.is_recursive = is_recursive
         self.use_chroot = use_chroot
-        self.zones = []
+
+    def build_dirs(self):
+        os.makedirs(os.path.join('chroots', self.name))
+        os.makedirs(os.path.join('chroots', self.name, 'var/named/zones'))
+        os.makedirs(os.path.join('chroots', self.name, 'var/log'))
+
+    def render_named9_conf(self):
+        named9_conf_template = ENV.get_template('named9.conf')
+        return named9_conf_template.render(ns=self)
 
     @property
     def base_dir(self):
@@ -25,20 +32,42 @@ class Nameserver(object):
             return ''
         return os.path.join(os.getcwd(), 'chroots', self.name)
 
-    def render_named9_conf(self):
-        named9_conf_template = ENV.get_template('named9.conf')
-        return named9_conf_template.render(ns=self)
-
-    def build_dirs(self):
-        os.makedirs(os.path.join('chroots', self.name))
-        os.makedirs(os.path.join('chroots', self.name, 'var/named/zones'))
-        os.makedirs(os.path.join('chroots', self.name, 'var/log'))
-
     def build_chroot(self):
         logging.info('Building %s', self.name)
         self.build_dirs()
         with open('chroots/%s/var/named/named9.conf' % self.name, 'w') as fh:
             fh.write(self.render_named9_conf())
+
+
+class RecursiveNameserver(Nameserver):
+    def __init__(self, name, ip, use_chroot, root_ns_ip):
+        super(RecursiveNameserver, self).__init__(name, ip, use_chroot)
+        self.root_ns_ip = root_ns_ip
+
+    @property
+    def is_recursive(self):
+        return True
+
+    def build_chroot(self):
+        super(RecursiveNameserver, self).build_chroot()
+        db_cache = ENV.get_template('db.cache')
+        with open('chroots/%s/var/named/zones/db.cache'
+                  % self.name, 'w') as fh:
+            fh.write(db_cache.render(root_ns_ip=self.root_ns_ip))
+
+
+class AuthNameserver(Nameserver):
+    def __init__(self, name, ip, use_chroot):
+        super(AuthNameserver, self).__init__(name, ip, use_chroot)
+        self.zones = []
+        self.delegated_zones = []
+
+    @property
+    def is_recursive(self):
+        return False
+
+    def build_chroot(self):
+        super(AuthNameserver, self).build_chroot()
         for zone in self.zones:
             zone.write_zonefile(self.name)
 
@@ -63,11 +92,26 @@ class MasterZone(object):
     def is_slave(self):
         return False
 
+    @property
+    def template_file(self):
+        return 'zone_template'
+
     def write_zonefile(self, ns_name):
-        zone_template = ENV.get_template('zone_template')
+        zone_template = ENV.get_template(self.template_file)
         file_path = 'chroots/%s/var/named/zones/%s.zone' % (ns_name, self.name)
         with open(file_path, 'w') as fh:
             fh.write(zone_template.render(zone=self))
+
+
+class RootZone(MasterZone):
+
+    def __init__(self, root_ns):
+        self.root_ns = root_ns
+        self.name = '.'
+
+    @property
+    def template_file(self):
+        return 'root_zone_template'
 
 
 class SlaveZone(object):
@@ -178,6 +222,10 @@ def main():
     parser.add_argument('--subdomain-resolver-count', type=int, default=0)
     parser.add_argument('--subdomain-resolver-ip-prefix', default='127.4.4')
 
+    parser.add_argument('--root-ns-ip', default='127.1.1.2')
+    parser.add_argument('--recursive-ns-prefix', default='127.5.5')
+    parser.add_argument('--recursive-ns-count', default=1)
+
     parser.add_argument('--refresh', type=int, default=60)
     parser.add_argument('--retry', type=int, default=30)
     parser.add_argument('--expire', type=int, default=300)
@@ -206,23 +254,20 @@ def main():
 
     use_chroot = not args.no_chroots
 
-    master_ns = Nameserver(
+    master_ns = AuthNameserver(
         name='master',
         ip=args.master_ip,
-        is_recursive=False,
         use_chroot=use_chroot)
     xfrs = [
-        Nameserver(
+        AuthNameserver(
             name='xfr%d' % i,
             ip='%s.%d' % (args.xfr_ip_prefix, i + 1),
-            is_recursive=False,
             use_chroot=use_chroot)
         for i in xrange(args.xfr_count)]
     resolvers = [
-        Nameserver(
+        AuthNameserver(
             name='resolver%d' % i,
             ip='%s.%d' % (args.resolver_ip_prefix, i + 1),
-            is_recursive=False,
             use_chroot=use_chroot)
         for i in xrange(args.resolver_count)]
     auth_nameservers = [master_ns] + xfrs + resolvers
@@ -252,10 +297,9 @@ def main():
 
     if args.subdomain_resolver_count > 0:
         subdomain_resolvers = [
-            Nameserver(
+            AuthNameserver(
                 name='sub%d' % i,
                 ip='%s.%d' % (args.subdomain_resolver_ip_prefix, i + 1),
-                is_recursive=False,
                 use_chroot=use_chroot)
             for i in xrange(args.subdomain_resolver_count)]
 
@@ -281,15 +325,36 @@ def main():
     else:
         subdomain_resolvers = []
 
+    root_ns = AuthNameserver(
+        name='root',
+        ip=args.root_ns_ip,
+        use_chroot=use_chroot)
+
+    root_zone = RootZone(root_ns=root_ns)
+    root_ns.zones = [root_zone]
+    delegated_zones = copy.deepcopy(master_zones)
+    for z in delegated_zones:
+        z.auth_nameservers = resolvers
+    root_ns.delegated_zones = delegated_zones
+
+    recursive_nameservers = [
+        RecursiveNameserver(
+            name='recursive%d' % i,
+            ip='%s.%d' % (args.recursive_ns_prefix, i + 1),
+            use_chroot=use_chroot,
+            root_ns_ip=args.root_ns_ip)
+        for i in xrange(args.recursive_ns_count)]
+
     clean_existing_directories()
 
-    for ns in [master_ns] + xfrs + resolvers + subdomain_resolvers:
+    all_nameservers = [root_ns, master_ns] + xfrs + resolvers + subdomain_resolvers + recursive_nameservers
+    for ns in all_nameservers:
         ns.build_chroot()
 
     if args.ns_path is not None:
         kill_running_nameservers()
         time.sleep(5)  # TODO: check that they actually stopped
-        configure_ips([master_ns] + xfrs + resolvers + subdomain_resolvers)
+        configure_ips(all_nameservers)
         start_nameservers(args.ns_path, not args.no_chroots)
 
     if args.nsupdate_path is not None:
