@@ -1,0 +1,2 @@
+. 120 IN NS root.com.
+root.com. 120 IN A {{ root_ns_ip }}

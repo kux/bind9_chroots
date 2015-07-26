@@ -1,0 +1,21 @@
+. IN SOA root.com. admin.root.com. (
+     1
+     3h
+     1h
+     1w
+     1h)
+    IN NS root.com.
+root.com. IN A {{ zone.root_ns.ip }}
+
+{% for zone in zone.root_ns.delegated_zones %}
+   {% for auth_ns in zone.auth_nameservers %}
+{{ zone.name }}. IN NS {{ auth_ns.name}}.{{ zone.name }}.
+  {% endfor %}
+{% endfor %}
+
+{% for zone in zone.root_ns.delegated_zones %}
+   {% for auth_ns in zone.auth_nameservers %}
+{{ auth_ns.name}}.{{ zone.name }}. IN A {{ auth_ns.ip}}
+  {% endfor %}
+{% endfor %}
+
