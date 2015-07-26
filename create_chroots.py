@@ -12,9 +12,10 @@ ENV = jinja2.Environment(loader=jinja2.FileSystemLoader('templates'))
 
 
 class Nameserver(object):
-    def __init__(self, name, ip, use_chroot):
+    def __init__(self, name, ip, is_recursive, use_chroot):
         self.name = name
         self.ip = ip
+        self.is_recursive = is_recursive
         self.use_chroot = use_chroot
         self.zones = []
 
@@ -86,6 +87,12 @@ class SlaveZone(object):
         pass
 
 
+class StubZone(SlaveZone):
+    @property
+    def type(self):
+        return 'stub'
+
+
 def run_command(command, stop_on_failure=True):
     logging.debug('Running command: %s', command)
     command = command.split()
@@ -117,13 +124,10 @@ def kill_running_nameservers():
     run_command('killall named', stop_on_failure=False)
 
 
-def configure_ips(args):
+def configure_ips(nameservers):
     logging.info('Configuring ips')
-    master_ip = args.master_ip
-    xfr_ips = ns_ips(args.xfr_ip_prefix, args.xfr_count)
-    resolver_ips = ns_ips(args.resolver_ip_prefix, args.resolver_count)
-    for index, ip in enumerate([master_ip] + xfr_ips + resolver_ips):
-        run_command('ifconfig lo:%d %s' % (index, ip))
+    for i, ns in enumerate(nameservers):
+        run_command('ifconfig lo:%d %s' % (i, ns.ip))
 
 
 def start_nameservers(ns_path, use_chroots):
@@ -170,7 +174,9 @@ def main():
 
     parser.add_argument('--xfr-count', type=int, default=2)
     parser.add_argument('--resolver-count', type=int, default=1)
+
     parser.add_argument('--subdomain-resolver-count', type=int, default=0)
+    parser.add_argument('--subdomain-resolver-ip-prefix', default='127.4.4')
 
     parser.add_argument('--refresh', type=int, default=60)
     parser.add_argument('--retry', type=int, default=30)
@@ -188,6 +194,11 @@ def main():
 
     args = parser.parse_args()
 
+    if args.zone_count < 1:
+        raise ValueError('At least one zone needs to be configured')
+    if args.record_count < 1:
+        raise ValueError('At least one test record needs to be configured')
+
     logging.basicConfig(
         format='%(asctime)s %(levelname)s: %(message)s',
         level=logging.DEBUG if args.debug else logging.INFO
@@ -198,17 +209,20 @@ def main():
     master_ns = Nameserver(
         name='master',
         ip=args.master_ip,
+        is_recursive=False,
         use_chroot=use_chroot)
     xfrs = [
         Nameserver(
             name='xfr%d' % i,
             ip='%s.%d' % (args.xfr_ip_prefix, i + 1),
+            is_recursive=False,
             use_chroot=use_chroot)
         for i in xrange(args.xfr_count)]
     resolvers = [
         Nameserver(
             name='resolver%d' % i,
             ip='%s.%d' % (args.resolver_ip_prefix, i + 1),
+            is_recursive=False,
             use_chroot=use_chroot)
         for i in xrange(args.resolver_count)]
     auth_nameservers = [master_ns] + xfrs + resolvers
@@ -236,19 +250,46 @@ def main():
     for resolver in resolvers:
         resolver.zones = resolver_zones
 
-    if args.zone_count < 1:
-        raise ValueError('At least one zone needs to be configured')
-    if args.record_count < 1:
-        raise ValueError('At least one test record needs to be configured')
+    if args.subdomain_resolver_count > 0:
+        subdomain_resolvers = [
+            Nameserver(
+                name='sub%d' % i,
+                ip='%s.%d' % (args.subdomain_resolver_ip_prefix, i + 1),
+                is_recursive=False,
+                use_chroot=use_chroot)
+            for i in xrange(args.subdomain_resolver_count)]
+
+        master_subdomain_zones = [
+            MasterZone('sub.zone%d.com' % i,
+                       auth_nameservers=subdomain_resolvers,
+                       refresh=args.refresh,
+                       retry=args.retry,
+                       expire=args.expire,
+                       negative_ttl=args.negative_ttl,
+                       record_count=args.record_count)
+            for i in xrange(args.zone_count)]
+        for resolver in subdomain_resolvers:
+            resolver.zones = master_subdomain_zones
+
+        subdomain_stubs = [
+            StubZone('sub.zone%d.com' % i,
+                     master_ips=[ns.ip for ns in subdomain_resolvers])
+            for i in xrange(args.zone_count)]
+
+        for resolver in resolvers:
+            resolver.zones.extend(subdomain_stubs)
+    else:
+        subdomain_resolvers = []
 
     clean_existing_directories()
-    for ns in [master_ns] + xfrs + resolvers:
+
+    for ns in [master_ns] + xfrs + resolvers + subdomain_resolvers:
         ns.build_chroot()
 
     if args.ns_path is not None:
         kill_running_nameservers()
         time.sleep(5)  # TODO: check that they actually stopped
-        configure_ips(args)
+        configure_ips([master_ns] + xfrs + resolvers + subdomain_resolvers)
         start_nameservers(args.ns_path, not args.no_chroots)
 
     if args.nsupdate_path is not None:
